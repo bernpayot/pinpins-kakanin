@@ -38,7 +38,10 @@ return [
         'shop' => env('SHOPIFY_STORE'),
         'client_id' => env('SHOPIFY_CLIENT_ID'),
         'client_secret' => env('SHOPIFY_CLIENT_SECRET'),
-        'api_version' => env('SHOPIFY_API_VERSION', '2026-07')
+        'api_version' => env('SHOPIFY_API_VERSION', '2026-07'),
+        'customer_api_url' => env('SHOPIFY_CUSTOMER_API_URL'),
+        'storefront_domain' => env('SHOPIFY_STOREFRONT_DOMAIN'),
+        'storefront_private_token' => env('SHOPIFY_STOREFRONT_PRIVATE_TOKEN'),
     ],
 
 ];
