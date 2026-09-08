@@ -23,6 +23,9 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["appAuthRedirectScheme"] =
+            providers.gradleProperty("SHOPIFY_REDIRECT_SCHEME")
+                .getOrElse("shop.83065831663.pinpinskakanin")
     }
 
     buildTypes {
@@ -42,4 +45,8 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("com.shopify:checkout-sheet-kit:3.6.3")
 }
