@@ -28,6 +28,19 @@ class CustomerAccount {
   }
 }
 
+class CustomerOrderLine {
+  const CustomerOrderLine({required this.name, required this.quantity});
+
+  final String name;
+  final int quantity;
+
+  factory CustomerOrderLine.fromJson(Map<String, dynamic> json) =>
+      CustomerOrderLine(
+        name: json['name'] as String,
+        quantity: json['quantity'] as int,
+      );
+}
+
 class CustomerOrder {
   const CustomerOrder({
     required this.name,
@@ -36,6 +49,7 @@ class CustomerOrder {
     required this.fulfillmentStatus,
     required this.amount,
     required this.currencyCode,
+    required this.lines,
   });
 
   final String name;
@@ -44,9 +58,11 @@ class CustomerOrder {
   final String fulfillmentStatus;
   final String amount;
   final String currencyCode;
+  final List<CustomerOrderLine> lines;
 
   factory CustomerOrder.fromJson(Map<String, dynamic> json) {
     final total = json['totalPrice'] as Map<String, dynamic>;
+    final lineItems = json['lineItems'] as Map<String, dynamic>;
     return CustomerOrder(
       name: json['name'] as String,
       processedAt: DateTime.parse(json['processedAt'] as String),
@@ -54,22 +70,50 @@ class CustomerOrder {
       fulfillmentStatus: json['fulfillmentStatus'] as String? ?? '',
       amount: total['amount'] as String,
       currencyCode: total['currencyCode'] as String,
+      lines: (lineItems['nodes'] as List)
+          .map(
+            (line) => CustomerOrderLine.fromJson(line as Map<String, dynamic>),
+          )
+          .toList(),
     );
   }
 }
 
 class CustomerAddress {
-  const CustomerAddress({required this.formatted, required this.isDefault});
+  const CustomerAddress({
+    required this.id,
+    required this.formatted,
+    required this.isDefault,
+    required this.input,
+  });
 
+  final String id;
   final List<String> formatted;
   final bool isDefault;
+  final Map<String, dynamic> input;
 
   factory CustomerAddress.fromJson(
     Map<String, dynamic> json, {
     required String? defaultAddressId,
   }) => CustomerAddress(
+    id: json['id'] as String,
     formatted: (json['formatted'] as List).cast<String>(),
     isDefault: json['id'] == defaultAddressId,
+    input: {
+      for (final key in const [
+        'firstName',
+        'lastName',
+        'company',
+        'address1',
+        'address2',
+        'city',
+        'zoneCode',
+        'territoryCode',
+        'zip',
+        'phoneNumber',
+      ])
+        if (json[key] != null) key: json[key],
+    },
   );
 }
 
@@ -114,6 +158,9 @@ class AccountService {
             financialStatus
             fulfillmentStatus
             totalPrice { amount currencyCode }
+            lineItems(first: 20) {
+              nodes { name quantity }
+            }
           }
           pageInfo { hasNextPage endCursor }
         }
@@ -125,9 +172,36 @@ class AccountService {
       customer {
         defaultAddress { id }
         addresses(first: 20, after: $after) {
-          nodes { id formatted }
+          nodes {
+            id
+            formatted
+            firstName
+            lastName
+            company
+            address1
+            address2
+            city
+            zoneCode
+            territoryCode
+            zip
+            phoneNumber
+          }
           pageInfo { hasNextPage endCursor }
         }
+      }
+    }
+  ''';
+  static const _updateAddressMutation = r'''
+    mutation UpdateAddress(
+      $addressId: ID!
+      $address: CustomerAddressInput!
+    ) {
+      customerAddressUpdate(
+        addressId: $addressId
+        address: $address
+        defaultAddress: true
+      ) {
+        userErrors { message }
       }
     }
   ''';
@@ -185,6 +259,22 @@ class AccountService {
       hasNextPage: pageInfo['hasNextPage'] as bool,
       endCursor: pageInfo['endCursor'] as String?,
     );
+  }
+
+  Future<void> setDefaultAddress(CustomerAddress address) async {
+    final data = await _graphql(_updateAddressMutation, {
+      'addressId': address.id,
+      'address': address.input,
+    });
+    final payload = data['customerAddressUpdate'] as Map<String, dynamic>;
+    final errors = payload['userErrors'] as List;
+    if (errors.isNotEmpty) {
+      throw Exception(
+        errors
+            .map((error) => (error as Map<String, dynamic>)['message'])
+            .join('\n'),
+      );
+    }
   }
 
   Future<CustomerAccount> updateProfile({

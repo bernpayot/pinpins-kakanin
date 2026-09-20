@@ -205,15 +205,16 @@ void main() {
         final service = AccountService(auth);
         final orders = await service.orders();
         final addresses = await service.addresses();
+        await service.setDefaultAddress(addresses.items.last);
         final customer = await service.updateProfile(
           firstName: 'Maria',
           lastName: 'Santos',
         );
 
         expect(orders.items.single.name, '#1001');
-        expect(orders.items.single.currencyCode, 'PHP');
-        expect(addresses.items.single.isDefault, isTrue);
-        expect(addresses.items.single.formatted, ['123 Rice Street', 'Manila']);
+        expect(orders.items.single.lines.single.name, 'Bibingka');
+        expect(addresses.items.first.isDefault, isTrue);
+        expect(addresses.items.first.formatted, ['123 Rice Street', 'Manila']);
         expect(customer.displayName, 'Maria Santos');
       },
       () => MockClient((request) async {
@@ -234,6 +235,22 @@ void main() {
         }
         if (query.contains('CustomerAddresses')) {
           return _customerResponse({'customer': _addressesJson});
+        }
+        if (query.contains('UpdateAddress')) {
+          expect(body['variables'], {
+            'addressId': 'gid://shopify/CustomerAddress/2',
+            'address': {
+              'firstName': 'Sally',
+              'lastName': 'Shopper',
+              'address1': '456 Cake Street',
+              'city': 'Imus',
+              'territoryCode': 'PH',
+              'zip': '4103',
+            },
+          });
+          return _customerResponse({
+            'customerAddressUpdate': {'userErrors': []},
+          });
         }
         if (query.contains('UpdateCustomer')) {
           expect(body['variables'], {
@@ -519,9 +536,11 @@ void main() {
 
     expect(find.text('#1001'), findsOneWidget);
     expect(find.text('#1002'), findsOneWidget);
+    expect(find.text('2× Bibingka'), findsWidgets);
     expect(orderRequests, 2);
     expect(find.textContaining('123 Rice Street'), findsOneWidget);
     expect(find.text('Default'), findsOneWidget);
+    expect(find.text('Make default'), findsOneWidget);
     expect(find.byTooltip('Edit profile'), findsOneWidget);
   });
 
@@ -703,6 +722,11 @@ const _orderJson = {
   'financialStatus': 'PAID',
   'fulfillmentStatus': 'FULFILLED',
   'totalPrice': {'amount': '240.00', 'currencyCode': 'PHP'},
+  'lineItems': {
+    'nodes': [
+      {'name': 'Bibingka', 'quantity': 2},
+    ],
+  },
 };
 
 const _addressesJson = {
@@ -712,6 +736,22 @@ const _addressesJson = {
       {
         'id': 'gid://shopify/CustomerAddress/1',
         'formatted': ['123 Rice Street', 'Manila'],
+        'firstName': 'Sally',
+        'lastName': 'Shopper',
+        'address1': '123 Rice Street',
+        'city': 'Manila',
+        'territoryCode': 'PH',
+        'zip': '1000',
+      },
+      {
+        'id': 'gid://shopify/CustomerAddress/2',
+        'formatted': ['456 Cake Street', 'Imus'],
+        'firstName': 'Sally',
+        'lastName': 'Shopper',
+        'address1': '456 Cake Street',
+        'city': 'Imus',
+        'territoryCode': 'PH',
+        'zip': '4103',
       },
     ],
     'pageInfo': {'hasNextPage': false, 'endCursor': null},

@@ -1741,6 +1741,7 @@ class _AccountPageState extends State<AccountPage> {
       .addresses();
   bool _loadingMoreOrders = false;
   bool _loadingMoreAddresses = false;
+  String? _updatingAddressId;
 
   Future<void> _reload() async {
     final customer = _service.currentCustomer();
@@ -1803,6 +1804,19 @@ class _AccountPageState extends State<AccountPage> {
       if (mounted) _showError(error);
     } finally {
       if (mounted) setState(() => _loadingMoreAddresses = false);
+    }
+  }
+
+  Future<void> _setDefaultAddress(CustomerAddress address) async {
+    setState(() => _updatingAddressId = address.id);
+    try {
+      await _service.setDefaultAddress(address);
+      final addresses = await _service.addresses();
+      if (mounted) setState(() => _addresses = Future.value(addresses));
+    } catch (error) {
+      if (mounted) _showError(error);
+    } finally {
+      if (mounted) setState(() => _updatingAddressId = null);
     }
   }
 
@@ -1946,30 +1960,36 @@ class _AccountPageState extends State<AccountPage> {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: PaperCard(
-                        child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            order.name,
-                            style: const TextStyle(fontWeight: FontWeight.w900),
-                          ),
-                          subtitle: Text(
-                            '${order.processedAt.toLocal().toIso8601String().split('T').first}\n${order.financialStatus} • ${order.fulfillmentStatus}',
-                          ),
-                          trailing: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                '${order.currencyCode} ${order.amount}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w900,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  order.name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
                                 ),
+                                Text(
+                                  '${order.currencyCode} ${order.amount}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Text(
+                              '${order.processedAt.toLocal().toIso8601String().split('T').first} • ${order.financialStatus} • ${order.fulfillmentStatus}',
+                            ),
+                            const Divider(),
+                            for (final line in order.lines)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text('${line.quantity}× ${line.name}'),
                               ),
-                              const Chip(
-                                label: Text('Order'),
-                                visualDensity: VisualDensity.compact,
-                              ),
-                            ],
-                          ),
+                          ],
                         ),
                       ),
                     ),
@@ -2027,7 +2047,16 @@ class _AccountPageState extends State<AccountPage> {
                                   avatar: Icon(Icons.eco_outlined, size: 15),
                                   label: Text('Default'),
                                 )
-                              : null,
+                              : TextButton(
+                                  onPressed: _updatingAddressId == null
+                                      ? () => _setDefaultAddress(address)
+                                      : null,
+                                  child: Text(
+                                    _updatingAddressId == address.id
+                                        ? 'Saving…'
+                                        : 'Make default',
+                                  ),
+                                ),
                         ),
                       ),
                     ),
