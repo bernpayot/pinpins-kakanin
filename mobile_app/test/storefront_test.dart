@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_appauth/flutter_appauth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -55,6 +56,19 @@ void main() {
     expect(product.variants.last.price.formatted, 'PHP 220.00');
   });
 
+  test('product details load its variants', () async {
+    final product = await http.runWithClient(
+      () => ProductService.getProduct('bibingka'),
+      () => MockClient((request) async {
+        expect(request.url.queryParameters['after'], isNull);
+        return http.Response(jsonEncode(_productDetailsJson), 200);
+      }),
+    );
+
+    expect(product.imageUrls, ['https://example.com/bibingka.jpg']);
+    expect(product.variants.single.id, 'gid://shopify/ProductVariant/1');
+  });
+
   test('basket persists only variant IDs and quantities', () async {
     final basket = BasketService();
 
@@ -63,10 +77,182 @@ void main() {
       'gid://shopify/ProductVariant/2': 1,
     });
 
+    await basket.saveCartId('gid://shopify/Cart/1?key=secret');
+
     expect(await basket.load(), {
       'gid://shopify/ProductVariant/1': 2,
       'gid://shopify/ProductVariant/2': 1,
     });
+    expect(await basket.loadCartId(), 'gid://shopify/Cart/1?key=secret');
+  });
+
+  test('Shopify cart sync removes, updates, and adds lines', () async {
+    var request = 0;
+    final cart = await http.runWithClient(
+      () => ProductService.syncCart({
+        'gid://shopify/ProductVariant/1': 2,
+        'gid://shopify/ProductVariant/3': 1,
+      }, cartId: 'gid://shopify/Cart/1?key=secret'),
+      () => MockClient((httpRequest) async {
+        request++;
+        final body = jsonDecode(httpRequest.body) as Map<String, dynamic>;
+        if (request == 1) {
+          expect(httpRequest.url.path, endsWith('/cart/read'));
+          return http.Response(
+            jsonEncode(_cartJson([_cartLine(1), _cartLine(2)])),
+            200,
+          );
+        }
+        if (request == 2) {
+          expect(body, containsPair('lineId', 'gid://shopify/CartLine/2'));
+          expect(body, containsPair('quantity', 0));
+          return http.Response(jsonEncode(_cartJson([_cartLine(1)])), 200);
+        }
+        if (request == 3) {
+          expect(body, containsPair('lineId', 'gid://shopify/CartLine/1'));
+          expect(body, containsPair('quantity', 2));
+          return http.Response(
+            jsonEncode(_cartJson([_cartLine(1, quantity: 2)])),
+            200,
+          );
+        }
+        expect(
+          body,
+          containsPair('variantId', 'gid://shopify/ProductVariant/3'),
+        );
+        return http.Response(
+          jsonEncode(_cartJson([_cartLine(1, quantity: 2), _cartLine(3)])),
+          200,
+        );
+      }),
+    );
+
+    expect(request, 4);
+    expect(cart.lines.map((line) => line.variantId), [
+      'gid://shopify/ProductVariant/1',
+      'gid://shopify/ProductVariant/3',
+    ]);
+    expect(cart.subtotal.formatted, 'PHP 240.00');
+  });
+
+  test(
+    'credential rotation does not restore the previous client session',
+    () async {
+      const storage = FlutterSecureStorage();
+      final oldSession = AuthSession(
+        accessToken: 'old-access-token',
+        idToken: 'old-id-token',
+        expiresAt: DateTime.utc(2100),
+      );
+      await storage.write(
+        key: 'shopify_customer_session',
+        value: oldSession.toJson(),
+      );
+      await storage.write(
+        key: 'shopify_customer_session_${ShopifyAuthConfig.clientId}',
+        value: _session.toJson(),
+      );
+
+      final restored = await ShopifyAuthService(
+        storage: storage,
+      ).restoreSession();
+
+      expect(restored?.accessToken, _session.accessToken);
+    },
+  );
+
+  test('account rejection renews once with the rejected token', () async {
+    final auth = _FakeAuth(session: _session);
+    var requests = 0;
+
+    final customer = await http.runWithClient(
+      () => AccountService(auth).currentCustomer(),
+      () => MockClient((request) async {
+        if (request.url.path.endsWith('/.well-known/customer-account-api')) {
+          return _customerDiscovery();
+        }
+        requests++;
+        if (request.headers['Authorization'] == 'renewed-token') {
+          return _customerResponse({'customer': _customerJson});
+        }
+        return http.Response('', 401);
+      }),
+    );
+
+    expect(customer.displayName, 'Sally Shopper');
+    expect(requests, 2);
+    expect(auth.renewedTokens, ['access-token']);
+  });
+
+  test('concurrent token requests share one OAuth login', () async {
+    final auth = _LoginAuth();
+
+    final tokens = await Future.wait([
+      auth.accessToken(),
+      auth.accessToken(),
+      auth.accessToken(),
+    ]);
+
+    expect(tokens, everyElement('access-token'));
+    expect(auth.loginCalls, 1);
+  });
+
+  test('account loads orders and addresses and updates the profile', () async {
+    final auth = _FakeAuth();
+
+    await http.runWithClient(
+      () async {
+        final service = AccountService(auth);
+        final orders = await service.orders();
+        final addresses = await service.addresses();
+        final customer = await service.updateProfile(
+          firstName: 'Maria',
+          lastName: 'Santos',
+        );
+
+        expect(orders.items.single.name, '#1001');
+        expect(orders.items.single.currencyCode, 'PHP');
+        expect(addresses.items.single.isDefault, isTrue);
+        expect(addresses.items.single.formatted, ['123 Rice Street', 'Manila']);
+        expect(customer.displayName, 'Maria Santos');
+      },
+      () => MockClient((request) async {
+        if (request.url.path.endsWith('/.well-known/customer-account-api')) {
+          return _customerDiscovery();
+        }
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final query = body['query'] as String;
+        if (query.contains('CustomerOrders')) {
+          return _customerResponse({
+            'customer': {
+              'orders': {
+                'nodes': [_orderJson],
+                'pageInfo': {'hasNextPage': false, 'endCursor': null},
+              },
+            },
+          });
+        }
+        if (query.contains('CustomerAddresses')) {
+          return _customerResponse({'customer': _addressesJson});
+        }
+        if (query.contains('UpdateCustomer')) {
+          expect(body['variables'], {
+            'input': {'firstName': 'Maria', 'lastName': 'Santos'},
+          });
+          return _customerResponse({
+            'customerUpdate': {
+              'customer': {
+                'firstName': 'Maria',
+                'lastName': 'Santos',
+                'emailAddress': {'emailAddress': 'sally@example.com'},
+              },
+              'userErrors': [],
+            },
+          });
+        }
+        throw StateError('Unexpected customer query: $query');
+      }),
+    );
   });
 
   test('catalog error includes the backend message', () async {
@@ -78,7 +264,7 @@ void main() {
     );
 
     await expectLater(
-      ProductService.getProducts(client: client),
+      http.runWithClient(ProductService.getProductBatch, () => client),
       throwsA(
         isA<Exception>().having(
           (error) => error.toString(),
@@ -89,66 +275,101 @@ void main() {
     );
   });
 
-  test(
-    'checkout submits IDs and quantities and surfaces Shopify errors',
-    () async {
-      final client = MockClient((request) async {
-        expect(jsonDecode(request.body), {
-          'lines': [
-            {'variantId': 'gid://shopify/ProductVariant/1', 'quantity': 2},
-          ],
-        });
-
-        return http.Response(
-          jsonEncode({
-            'errors': [
-              {'message': 'The merchandise is unavailable.'},
-            ],
-          }),
-          422,
-        );
+  test('cart submits customer token, IDs, and quantities', () async {
+    final client = MockClient((request) async {
+      expect(request.headers['authorization'], 'Bearer customer-token');
+      expect(jsonDecode(request.body), {
+        'lines': [
+          {'variantId': 'gid://shopify/ProductVariant/1', 'quantity': 2},
+        ],
       });
 
-      await expectLater(
-        ProductService.createCheckout({
-          'gid://shopify/ProductVariant/1': 2,
-        }, client: client),
-        throwsA(
-          isA<CheckoutException>().having(
-            (error) => error.message,
-            'message',
-            'The merchandise is unavailable.',
-          ),
-        ),
+      return http.Response(
+        jsonEncode({
+          'errors': [
+            {'message': 'The merchandise is unavailable.'},
+          ],
+        }),
+        422,
       );
-    },
-  );
+    });
+
+    await expectLater(
+      http.runWithClient(
+        () => ProductService.createCart({
+          'gid://shopify/ProductVariant/1': 2,
+        }, customerAccessToken: 'customer-token'),
+        () => client,
+      ),
+      throwsA(
+        isA<CheckoutException>().having(
+          (error) => error.message,
+          'message',
+          'The merchandise is unavailable.',
+        ),
+      ),
+    );
+  });
+
+  test('checkout preload sends the URL to the native SDK', () async {
+    MethodCall? call;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('com.pinpinskakanin/checkout'),
+          (value) async {
+            call = value;
+            return null;
+          },
+        );
+
+    await CheckoutKit.preload(Uri.parse('https://shop.example/checkouts/abc'));
+
+    expect(call?.method, 'preload');
+    expect(call?.arguments, {
+      'checkoutUrl': 'https://shop.example/checkouts/abc',
+    });
+  });
 
   testWidgets('checkout launch failure keeps the basket', (tester) async {
     final basket = BasketService();
     const lines = {'gid://shopify/ProductVariant/1': 2};
     await basket.save(lines);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('com.pinpinskakanin/checkout'),
+          (call) async => call.method == 'present'
+              ? throw PlatformException(
+                  code: 'checkout_failed',
+                  message: 'Could not open checkout',
+                )
+              : null,
+        );
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: BasketPage(
-          products: const [],
-          initialBasket: lines,
-          basketService: basket,
-          checkoutCreator: (submitted) async {
-            expect(submitted, lines);
-            return CheckoutResult(
-              url: Uri.parse('https://shop.example/checkouts/abc'),
-              total: null,
-            );
-          },
-          checkoutPresenter: (_) async =>
-              throw const CheckoutKitException('Could not open checkout'),
-        ),
-      ),
+    await http.runWithClient(
+      () async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: BasketPage(
+              products: const [],
+              initialBasket: lines,
+              basketService: basket,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Checkout'));
+        await tester.pumpAndSettle();
+      },
+      () => _storeClient((request) {
+        if (request.url.path.endsWith('/shopify/cart')) {
+          return http.Response(
+            jsonEncode(_cartJson([_cartLine(1, quantity: 2)])),
+            201,
+          );
+        }
+        return null;
+      }),
     );
-    await tester.tap(find.text('Checkout'));
-    await tester.pumpAndSettle();
 
     expect(find.text('Could not open checkout'), findsOneWidget);
     expect(await basket.load(), lines);
@@ -158,26 +379,41 @@ void main() {
     final basket = BasketService();
     const lines = {'gid://shopify/ProductVariant/1': 2};
     await basket.save(lines);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('com.pinpinskakanin/checkout'),
+          (call) async => call.method == 'present' ? 'completed' : null,
+        );
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: BasketPage(
-          products: const [],
-          initialBasket: lines,
-          basketService: basket,
-          checkoutCreator: (_) async => CheckoutResult(
-            url: Uri.parse('https://shop.example/checkouts/abc'),
-            total: null,
+    await http.runWithClient(
+      () async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: BasketPage(
+              products: const [],
+              initialBasket: lines,
+              basketService: basket,
+            ),
           ),
-          checkoutPresenter: (_) async => CheckoutStatus.completed,
-        ),
-      ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Checkout'));
+        await tester.pumpAndSettle();
+      },
+      () => _storeClient((request) {
+        if (request.url.path.endsWith('/shopify/cart')) {
+          return http.Response(
+            jsonEncode(_cartJson([_cartLine(1, quantity: 2)])),
+            201,
+          );
+        }
+        return null;
+      }),
     );
-    await tester.tap(find.text('Checkout'));
-    await tester.pumpAndSettle();
 
     expect(find.text('Your basket is empty'), findsOneWidget);
     expect(await basket.load(), isEmpty);
+    expect(await basket.loadCartId(), isNull);
   });
 
   testWidgets('fresh installation opens products without requesting account', (
@@ -185,49 +421,125 @@ void main() {
   ) async {
     var accountRequests = 0;
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AuthGate(
-          auth: _FakeAuth(),
-          productsLoader: () async => [],
-          customerLoader: () async {
-            accountRequests++;
-            return _customer;
-          },
-        ),
-      ),
+    await http.runWithClient(
+      () async {
+        await tester.pumpWidget(MaterialApp(home: AuthGate(auth: _FakeAuth())));
+        await tester.pumpAndSettle();
+      },
+      () => _storeClient((request) {
+        if (request.url.host == 'accounts.example') accountRequests++;
+        return null;
+      }),
     );
-    await tester.pumpAndSettle();
 
     expect(find.text('No products found'), findsOneWidget);
-    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.byTooltip('Account'), findsOneWidget);
+    expect(find.text('Sign in'), findsNothing);
     expect(accountRequests, 0);
   });
 
-  testWidgets('failed reload is rendered without a setState exception', (
+  testWidgets('one failed account section does not hide the others', (
     tester,
   ) async {
-    var requests = 0;
+    final auth = _FakeAuth(session: _session);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AuthGate(
-          auth: _FakeAuth(),
-          productsLoader: () {
-            requests++;
-            return requests == 1
-                ? Future.value([])
-                : Future.error(Exception('catalog unavailable'));
-          },
-        ),
-      ),
+    await http.runWithClient(
+      () async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AccountPage(auth: auth, signOut: () {}),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      },
+      () => _storeClient((request) {
+        if (request.url.host == 'accounts.example' &&
+            (jsonDecode(request.body) as Map<String, dynamic>)['query']
+                .toString()
+                .contains('CustomerOrders')) {
+          return http.Response('', 401);
+        }
+        return null;
+      }),
     );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Reload'));
-    await tester.pumpAndSettle();
 
-    expect(find.textContaining('catalog unavailable'), findsOneWidget);
+    expect(find.textContaining('Shopify rejected'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Sally Shopper'), findsOneWidget);
+    expect(find.textContaining('123 Rice Street'), findsOneWidget);
+    expect(auth.session, isNull);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('account page paginates orders and shows saved addresses', (
+    tester,
+  ) async {
+    final auth = _FakeAuth(session: _session);
+    var orderRequests = 0;
+
+    await http.runWithClient(
+      () async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AccountPage(auth: auth, signOut: () {}),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Load more orders'));
+        await tester.pumpAndSettle();
+      },
+      () => _storeClient((request) {
+        if (request.url.host != 'accounts.example') return null;
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        if (!(body['query'] as String).contains('CustomerOrders')) return null;
+
+        orderRequests++;
+        final isNextPage =
+            (body['variables'] as Map<String, dynamic>)['after'] ==
+            'orders-page-2';
+        return _customerResponse({
+          'customer': {
+            'orders': {
+              'nodes': [
+                {..._orderJson, 'name': isNextPage ? '#1002' : '#1001'},
+              ],
+              'pageInfo': {
+                'hasNextPage': !isNextPage,
+                'endCursor': isNextPage ? null : 'orders-page-2',
+              },
+            },
+          },
+        });
+      }),
+    );
+
+    expect(find.text('#1001'), findsOneWidget);
+    expect(find.text('#1002'), findsOneWidget);
+    expect(orderRequests, 2);
+    expect(find.textContaining('123 Rice Street'), findsOneWidget);
+    expect(find.text('Default'), findsOneWidget);
+    expect(find.byTooltip('Edit profile'), findsOneWidget);
+  });
+
+  testWidgets('store shell keeps only account action and floating basket', (
+    tester,
+  ) async {
+    await http.runWithClient(() async {
+      await tester.pumpWidget(MaterialApp(home: AuthGate(auth: _FakeAuth())));
+      await tester.pumpAndSettle();
+    }, _storeClient);
+
+    expect(find.text('Pinpins Kakanin'), findsOneWidget);
+    expect(find.byTooltip('Account'), findsOneWidget);
+    expect(find.text('Sign in'), findsNothing);
+    expect(find.byTooltip('Basket'), findsOneWidget);
+    expect(find.byTooltip('Reload'), findsNothing);
+    expect(tester.widget<AppBar>(find.byType(AppBar)).leading, isNull);
+    expect(find.byType(NavigationBar), findsNothing);
   });
 
   testWidgets('cancelling login leaves the store accessible', (tester) async {
@@ -238,40 +550,97 @@ void main() {
       ),
     );
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AuthGate(auth: auth, productsLoader: () async => []),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pumpAndSettle();
+    await http.runWithClient(() async {
+      await tester.pumpWidget(MaterialApp(home: AuthGate(auth: auth)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Account'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sign in'));
+      await tester.pumpAndSettle();
+    }, _storeClient);
 
     expect(find.text('No products found'), findsOneWidget);
-    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.byTooltip('Account'), findsOneWidget);
   });
 
   testWidgets('signing out leaves the store accessible', (tester) async {
     final auth = _FakeAuth(session: _session);
+    final basket = BasketService();
+    await basket.saveCartId('gid://shopify/Cart/1?key=secret');
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AuthGate(
-          auth: auth,
-          productsLoader: () async => [],
-          customerLoader: () async => _customer,
+    await http.runWithClient(() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AuthGate(auth: auth, basket: basket),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign out'));
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Account'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Sign out'));
+      await tester.tap(find.text('Sign out'));
+      await tester.pumpAndSettle();
+    }, _storeClient);
 
     expect(auth.logoutCalls, 1);
+    expect(await basket.loadCartId(), isNull);
     expect(find.text('No products found'), findsOneWidget);
-    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.byTooltip('Account'), findsOneWidget);
   });
 }
+
+MockClient _storeClient([
+  http.Response? Function(http.Request request)? handle,
+]) => MockClient((request) async {
+  final response = handle?.call(request);
+  if (response != null) return response;
+
+  if (request.url.path.endsWith('/shopify/products')) {
+    return http.Response(
+      jsonEncode({
+        'nodes': [],
+        'pageInfo': {'hasNextPage': false, 'endCursor': null},
+      }),
+      200,
+    );
+  }
+  if (request.url.path.endsWith('/shopify/collections')) {
+    return http.Response('[]', 200);
+  }
+  if (request.url.path.endsWith('/.well-known/customer-account-api')) {
+    return _customerDiscovery();
+  }
+
+  final body = jsonDecode(request.body) as Map<String, dynamic>;
+  final query = body['query'] as String;
+  if (query.contains('CurrentCustomer')) {
+    return _customerResponse({'customer': _customerJson});
+  }
+  if (query.contains('CustomerOrders')) {
+    return _customerResponse({
+      'customer': {
+        'orders': {
+          'nodes': [],
+          'pageInfo': {'hasNextPage': false, 'endCursor': null},
+        },
+      },
+    });
+  }
+  if (query.contains('CustomerAddresses')) {
+    return _customerResponse({'customer': _addressesJson});
+  }
+  throw StateError('Unexpected request: ${request.url}');
+});
+
+http.Response _customerDiscovery() => http.Response(
+  jsonEncode({
+    'graphql_api': 'https://accounts.example/customer/api/2026-07/graphql',
+  }),
+  200,
+);
+
+http.Response _customerResponse(Map<String, dynamic> data) =>
+    http.Response(jsonEncode({'data': data}), 200);
 
 final _session = AuthSession(
   accessToken: 'access-token',
@@ -279,11 +648,89 @@ final _session = AuthSession(
   expiresAt: DateTime.utc(2100),
 );
 
-const _customer = CustomerAccount(
-  firstName: 'Sally',
-  lastName: 'Shopper',
-  email: 'sally@example.com',
-);
+const Map<String, dynamic> _productDetailsJson = {
+  'handle': 'bibingka',
+  'title': 'Bibingka',
+  'description': 'Rice cake',
+  'images': {
+    'nodes': [
+      {'url': 'https://example.com/bibingka.jpg'},
+    ],
+  },
+  'variants': {
+    'nodes': [
+      {
+        'id': 'gid://shopify/ProductVariant/1',
+        'title': 'Size 1',
+        'selectedOptions': [],
+        'availableForSale': true,
+        'price': {'amount': '120.00', 'currencyCode': 'PHP'},
+      },
+    ],
+  },
+};
+
+Map<String, dynamic> _cartLine(int id, {int quantity = 1}) => {
+  'id': 'gid://shopify/CartLine/$id',
+  'quantity': quantity,
+  'merchandise': {
+    'id': 'gid://shopify/ProductVariant/$id',
+    'title': 'Size $id',
+    'availableForSale': true,
+    'price': {'amount': '120.00', 'currencyCode': 'PHP'},
+    'product': {'title': 'Bibingka $id'},
+  },
+};
+
+Map<String, dynamic> _cartJson(List<Map<String, dynamic>> lines) => {
+  'id': 'gid://shopify/Cart/1?key=secret',
+  'checkoutUrl': 'https://shop.example/checkouts/abc',
+  'cost': {
+    'subtotalAmount': {'amount': '240.00', 'currencyCode': 'PHP'},
+  },
+  'lines': {'nodes': lines},
+};
+
+const _customerJson = {
+  'firstName': 'Sally',
+  'lastName': 'Shopper',
+  'emailAddress': {'emailAddress': 'sally@example.com'},
+};
+
+const _orderJson = {
+  'name': '#1001',
+  'processedAt': '2026-09-08T00:00:00Z',
+  'financialStatus': 'PAID',
+  'fulfillmentStatus': 'FULFILLED',
+  'totalPrice': {'amount': '240.00', 'currencyCode': 'PHP'},
+};
+
+const _addressesJson = {
+  'defaultAddress': {'id': 'gid://shopify/CustomerAddress/1'},
+  'addresses': {
+    'nodes': [
+      {
+        'id': 'gid://shopify/CustomerAddress/1',
+        'formatted': ['123 Rice Street', 'Manila'],
+      },
+    ],
+    'pageInfo': {'hasNextPage': false, 'endCursor': null},
+  },
+};
+
+class _LoginAuth extends ShopifyAuthService {
+  int loginCalls = 0;
+
+  @override
+  Future<AuthSession?> restoreSession() async => null;
+
+  @override
+  Future<AuthSession> login({bool silent = false}) async {
+    loginCalls++;
+    await Future<void>.delayed(Duration.zero);
+    return _session;
+  }
+}
 
 class _FakeAuth extends ShopifyAuthService {
   _FakeAuth({this.session, this.loginError});
@@ -291,6 +738,20 @@ class _FakeAuth extends ShopifyAuthService {
   AuthSession? session;
   final Object? loginError;
   int logoutCalls = 0;
+  int accessTokenCalls = 0;
+  final renewedTokens = <String>[];
+
+  @override
+  Future<String> accessToken() async {
+    accessTokenCalls++;
+    return 'access-token';
+  }
+
+  @override
+  Future<String> renewAccessToken(String rejectedToken) async {
+    renewedTokens.add(rejectedToken);
+    return 'renewed-token';
+  }
 
   @override
   Future<AuthSession?> restoreSession() async => session;

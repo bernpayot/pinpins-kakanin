@@ -21,12 +21,30 @@ import UIKit
       name: "com.pinpinskakanin/checkout",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     ).setMethodCallHandler { [weak self] call, result in
-      guard call.method == "present" else {
+      switch call.method {
+      case "preload":
+        self?.preloadCheckout(call: call, result: result)
+      case "present":
+        self?.presentCheckout(call: call, result: result)
+      default:
         result(FlutterMethodNotImplemented)
-        return
       }
-      self?.presentCheckout(call: call, result: result)
     }
+  }
+
+  private func preloadCheckout(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard
+      let arguments = call.arguments as? [String: Any],
+      let value = arguments["checkoutUrl"] as? String,
+      let url = URL(string: value),
+      url.scheme == "https"
+    else {
+      result(FlutterError(code: "invalid_checkout", message: "Invalid checkout", details: nil))
+      return
+    }
+
+    ShopifyCheckoutSheetKit.preload(checkout: url)
+    result(nil)
   }
 
   private func presentCheckout(call: FlutterMethodCall, result: @escaping FlutterResult) {

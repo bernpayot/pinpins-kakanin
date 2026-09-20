@@ -31,9 +31,6 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
   http: ^1.6.0
   flutter_appauth: ^12.1.0
   flutter_secure_storage: ^10.0.0
@@ -59,6 +56,28 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/licenses/
+
+  fonts:
+    - family: PinpinsSans
+      fonts:
+        - asset: assets/fonts/PinpinsSans-Regular.ttf
+        - asset: assets/fonts/PinpinsSans-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/PinpinsSans-Black.ttf
+          weight: 900
+    - family: PinpinsSerif
+      fonts:
+        - asset: assets/fonts/PinpinsSerif-Regular.ttf
+        - asset: assets/fonts/PinpinsSerif-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/PinpinsSerif-Black.ttf
+          weight: 900
+        - asset: assets/fonts/PinpinsSerif-BoldItalic.ttf
+          weight: 700
+          style: italic
 
   # To add assets to your application, add an assets section, like this:
   # assets:

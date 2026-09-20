@@ -5,6 +5,18 @@ enum CheckoutStatus { completed, cancelled }
 class CheckoutKit {
   static const _channel = MethodChannel('com.pinpinskakanin/checkout');
 
+  static Future<void> preload(Uri checkoutUrl) async {
+    if (checkoutUrl.scheme != 'https') return;
+
+    try {
+      await _channel.invokeMethod<void>('preload', {
+        'checkoutUrl': checkoutUrl.toString(),
+      });
+    } on PlatformException {
+      // Preloading is an optional optimization; checkout can still open normally.
+    }
+  }
+
   static Future<CheckoutStatus> present(Uri checkoutUrl) async {
     if (checkoutUrl.scheme != 'https') {
       throw const CheckoutKitException('Invalid checkout URL');

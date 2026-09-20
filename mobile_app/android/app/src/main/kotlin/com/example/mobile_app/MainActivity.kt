@@ -16,18 +16,23 @@ class MainActivity : FlutterFragmentActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.pinpinskakanin/checkout")
             .setMethodCallHandler { call, result ->
-                if (call.method != "present") {
-                    result.notImplemented()
-                    return@setMethodCallHandler
-                }
-
                 val checkoutUrl = call.argument<String>("checkoutUrl")
                 if (checkoutUrl == null || Uri.parse(checkoutUrl).scheme != "https") {
                     result.error("invalid_url", "Invalid checkout URL", null)
-                } else if (pendingCheckoutResult != null) {
-                    result.error("checkout_active", "Checkout is already open", null)
-                } else {
-                    presentCheckout(checkoutUrl, result)
+                    return@setMethodCallHandler
+                }
+
+                when (call.method) {
+                    "preload" -> {
+                        ShopifyCheckoutSheetKit.preload(checkoutUrl, this)
+                        result.success(null)
+                    }
+                    "present" -> if (pendingCheckoutResult != null) {
+                        result.error("checkout_active", "Checkout is already open", null)
+                    } else {
+                        presentCheckout(checkoutUrl, result)
+                    }
+                    else -> result.notImplemented()
                 }
             }
     }

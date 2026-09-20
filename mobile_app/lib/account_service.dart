@@ -28,46 +28,260 @@ class CustomerAccount {
   }
 }
 
+class CustomerOrder {
+  const CustomerOrder({
+    required this.name,
+    required this.processedAt,
+    required this.financialStatus,
+    required this.fulfillmentStatus,
+    required this.amount,
+    required this.currencyCode,
+  });
+
+  final String name;
+  final DateTime processedAt;
+  final String financialStatus;
+  final String fulfillmentStatus;
+  final String amount;
+  final String currencyCode;
+
+  factory CustomerOrder.fromJson(Map<String, dynamic> json) {
+    final total = json['totalPrice'] as Map<String, dynamic>;
+    return CustomerOrder(
+      name: json['name'] as String,
+      processedAt: DateTime.parse(json['processedAt'] as String),
+      financialStatus: json['financialStatus'] as String? ?? '',
+      fulfillmentStatus: json['fulfillmentStatus'] as String? ?? '',
+      amount: total['amount'] as String,
+      currencyCode: total['currencyCode'] as String,
+    );
+  }
+}
+
+class CustomerAddress {
+  const CustomerAddress({required this.formatted, required this.isDefault});
+
+  final List<String> formatted;
+  final bool isDefault;
+
+  factory CustomerAddress.fromJson(
+    Map<String, dynamic> json, {
+    required String? defaultAddressId,
+  }) => CustomerAddress(
+    formatted: (json['formatted'] as List).cast<String>(),
+    isDefault: json['id'] == defaultAddressId,
+  );
+}
+
+class AccountConnection<T> {
+  const AccountConnection({
+    required this.items,
+    required this.hasNextPage,
+    required this.endCursor,
+  });
+
+  final List<T> items;
+  final bool hasNextPage;
+  final String? endCursor;
+}
+
 class AuthenticationExpiredException implements Exception {
   const AuthenticationExpiredException();
+
+  @override
+  String toString() => 'Shopify rejected the customer session.';
 }
 
 class AccountService {
   AccountService(this.auth);
 
-  static const baseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:8000/api',
-  );
+  static const _customerQuery = r'''
+    query CurrentCustomer {
+      customer {
+        firstName
+        lastName
+        emailAddress { emailAddress }
+      }
+    }
+  ''';
+  static const _ordersQuery = r'''
+    query CustomerOrders($after: String) {
+      customer {
+        orders(first: 20, after: $after, reverse: true) {
+          nodes {
+            name
+            processedAt
+            financialStatus
+            fulfillmentStatus
+            totalPrice { amount currencyCode }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  ''';
+  static const _addressesQuery = r'''
+    query CustomerAddresses($after: String) {
+      customer {
+        defaultAddress { id }
+        addresses(first: 20, after: $after) {
+          nodes { id formatted }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  ''';
+  static const _updateCustomerMutation = r'''
+    mutation UpdateCustomer($input: CustomerUpdateInput!) {
+      customerUpdate(input: $input) {
+        customer {
+          firstName
+          lastName
+          emailAddress { emailAddress }
+        }
+        userErrors { message }
+      }
+    }
+  ''';
 
   final ShopifyAuthService auth;
+  Future<Uri>? _endpoint;
 
-  Future<CustomerAccount> currentCustomer({
-    bool renewOnUnauthorized = true,
-  }) async {
-    var response = await _get(await auth.accessToken());
+  Future<CustomerAccount> currentCustomer() async {
+    final data = await _graphql(_customerQuery);
+    return CustomerAccount.fromJson(data['customer'] as Map<String, dynamic>);
+  }
 
-    if (response.statusCode == 401 && !renewOnUnauthorized) {
-      throw const AuthenticationExpiredException();
-    }
-    if (response.statusCode == 401) {
-      response = await _get(await auth.accessToken(renew: true));
-    }
-
-    if (response.statusCode != 200) {
-      throw Exception('Failed to retrieve account (${response.statusCode})');
-    }
-
-    return CustomerAccount.fromJson(
-      jsonDecode(response.body) as Map<String, dynamic>,
+  Future<AccountConnection<CustomerOrder>> orders({String? after}) async {
+    final data = await _graphql(_ordersQuery, {'after': after});
+    final orders =
+        (data['customer'] as Map<String, dynamic>)['orders']
+            as Map<String, dynamic>;
+    final pageInfo = orders['pageInfo'] as Map<String, dynamic>;
+    return AccountConnection(
+      items: (orders['nodes'] as List)
+          .map((order) => CustomerOrder.fromJson(order as Map<String, dynamic>))
+          .toList(),
+      hasNextPage: pageInfo['hasNextPage'] as bool,
+      endCursor: pageInfo['endCursor'] as String?,
     );
   }
 
-  Future<http.Response> _get(String accessToken) => http.get(
-    Uri.parse('$baseUrl/account'),
-    headers: {
-      'Accept': 'application/json',
-      'Authorization': 'Bearer $accessToken',
-    },
-  );
+  Future<AccountConnection<CustomerAddress>> addresses({String? after}) async {
+    final data = await _graphql(_addressesQuery, {'after': after});
+    final customer = data['customer'] as Map<String, dynamic>;
+    final defaultAddress = customer['defaultAddress'] as Map<String, dynamic>?;
+    final addresses = customer['addresses'] as Map<String, dynamic>;
+    final pageInfo = addresses['pageInfo'] as Map<String, dynamic>;
+    return AccountConnection(
+      items: (addresses['nodes'] as List)
+          .map(
+            (address) => CustomerAddress.fromJson(
+              address as Map<String, dynamic>,
+              defaultAddressId: defaultAddress?['id'] as String?,
+            ),
+          )
+          .toList(),
+      hasNextPage: pageInfo['hasNextPage'] as bool,
+      endCursor: pageInfo['endCursor'] as String?,
+    );
+  }
+
+  Future<CustomerAccount> updateProfile({
+    required String firstName,
+    required String lastName,
+  }) async {
+    final data = await _graphql(_updateCustomerMutation, {
+      'input': {'firstName': firstName, 'lastName': lastName},
+    });
+    final payload = data['customerUpdate'] as Map<String, dynamic>;
+    final errors = payload['userErrors'] as List;
+    if (errors.isNotEmpty) {
+      throw Exception(
+        errors
+            .map((error) => (error as Map<String, dynamic>)['message'])
+            .join('\n'),
+      );
+    }
+    return CustomerAccount.fromJson(
+      payload['customer'] as Map<String, dynamic>,
+    );
+  }
+
+  Future<Map<String, dynamic>> _graphql(
+    String query, [
+    Map<String, dynamic> variables = const {},
+  ]) async {
+    final endpoint = await _apiUrl();
+    final response = await _authorized(
+      (token) => http.post(
+        endpoint,
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': token,
+        },
+        body: jsonEncode({'query': query, 'variables': variables}),
+      ),
+    );
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Shopify Customer Account API request failed (${response.statusCode})',
+      );
+    }
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final errors = body['errors'] as List?;
+    if (errors?.isNotEmpty == true) {
+      throw Exception(
+        errors!
+            .map((error) => (error as Map<String, dynamic>)['message'])
+            .join('\n'),
+      );
+    }
+    return body['data'] as Map<String, dynamic>;
+  }
+
+  Future<Uri> _apiUrl() async {
+    final request = _endpoint ??= _discoverApiUrl();
+    try {
+      return await request;
+    } catch (_) {
+      if (identical(_endpoint, request)) _endpoint = null;
+      rethrow;
+    }
+  }
+
+  Future<Uri> _discoverApiUrl() async {
+    final response = await http.get(
+      Uri.parse(
+        '${ShopifyAuthConfig.storefrontUrl.replaceAll(RegExp(r'/$'), '')}/.well-known/customer-account-api',
+      ),
+      headers: const {'Accept': 'application/json'},
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Could not discover Shopify Customer Account API.');
+    }
+    final value =
+        (jsonDecode(response.body) as Map<String, dynamic>)['graphql_api'];
+    final endpoint = value is String ? Uri.tryParse(value) : null;
+    if (endpoint == null || endpoint.scheme != 'https') {
+      throw Exception('Shopify returned an invalid Customer Account API URL.');
+    }
+    return endpoint;
+  }
+
+  Future<http.Response> _authorized(
+    Future<http.Response> Function(String token) send,
+  ) async {
+    final token = await auth.accessToken();
+    var response = await send(token);
+    if (response.statusCode == 401) {
+      response = await send(await auth.renewAccessToken(token));
+      if (response.statusCode == 401) {
+        await auth.clearSession();
+        throw const AuthenticationExpiredException();
+      }
+    }
+    return response;
+  }
 }

@@ -2,13 +2,14 @@ import 'dart:convert';
 
 import 'package:flutter_appauth/flutter_appauth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
 
 class ShopifyAuthConfig {
   static const clientId = String.fromEnvironment('SHOPIFY_CUSTOMER_CLIENT_ID');
   static const storefrontUrl = String.fromEnvironment('SHOPIFY_STOREFRONT_URL');
   static const redirectScheme = String.fromEnvironment(
     'SHOPIFY_REDIRECT_SCHEME',
-    defaultValue: 'shop.configure-me.pinpinskakanin',
+    defaultValue: 'shop.83065831663.pinpinskakanin',
   );
 
   static String get discoveryUrl =>
@@ -60,11 +61,14 @@ class ShopifyAuthService {
     : _appAuth = appAuth ?? FlutterAppAuth(),
       _storage = storage ?? const FlutterSecureStorage();
 
-  static const _sessionKey = 'shopify_customer_session';
+  static String get _sessionKey =>
+      'shopify_customer_session_${ShopifyAuthConfig.clientId}';
   static const _scopes = ['openid', 'email', 'customer-account-api:full'];
 
   final FlutterAppAuth _appAuth;
   final FlutterSecureStorage _storage;
+  Future<String>? _authentication;
+  Future<String>? _renewal;
 
   Future<AuthSession?> restoreSession() async {
     final value = await _storage.read(key: _sessionKey);
@@ -111,12 +115,31 @@ class ShopifyAuthService {
     return session;
   }
 
-  Future<String> accessToken({bool renew = false}) async {
+  Future<String> accessToken() async {
     final session = await restoreSession();
-    if (!renew && session != null && !session.isExpiring()) {
+    if (session != null) return session.accessToken;
+    return _authenticate();
+  }
+
+  Future<String> renewAccessToken(String rejectedToken) {
+    return _renewal ??= _renew(
+      rejectedToken,
+    ).whenComplete(() => _renewal = null);
+  }
+
+  Future<String> _renew(String rejectedToken) async {
+    final session = await restoreSession();
+    if (session != null && session.accessToken != rejectedToken) {
       return session.accessToken;
     }
+    await clearSession();
+    return _authenticate();
+  }
 
+  Future<String> _authenticate() =>
+      _authentication ??= _login().whenComplete(() => _authentication = null);
+
+  Future<String> _login() async {
     try {
       return (await login(silent: true)).accessToken;
     } on FlutterAppAuthPlatformException catch (error) {
@@ -133,12 +156,32 @@ class ShopifyAuthService {
     try {
       if (session != null) {
         ShopifyAuthConfig.validate();
-        await _appAuth.endSession(
-          EndSessionRequest(
-            idTokenHint: session.idToken,
-            discoveryUrl: ShopifyAuthConfig.discoveryUrl,
-          ),
+        final discovery = await http.get(
+          Uri.parse(ShopifyAuthConfig.discoveryUrl),
+          headers: const {'Accept': 'application/json'},
         );
+        if (discovery.statusCode != 200) {
+          throw Exception('Could not discover Shopify logout endpoint.');
+        }
+        final value =
+            (jsonDecode(discovery.body)
+                as Map<String, dynamic>)['end_session_endpoint'];
+        final endpoint = value is String ? Uri.tryParse(value) : null;
+        if (endpoint == null || endpoint.scheme != 'https') {
+          throw Exception('Shopify returned an invalid logout endpoint.');
+        }
+        final response = await http.get(
+          endpoint.replace(
+            queryParameters: {
+              ...endpoint.queryParameters,
+              'id_token_hint': session.idToken,
+            },
+          ),
+          headers: const {'Accept': 'application/json'},
+        );
+        if (response.statusCode != 200) {
+          throw Exception('Shopify logout failed (${response.statusCode}).');
+        }
       }
     } finally {
       await clearSession();
