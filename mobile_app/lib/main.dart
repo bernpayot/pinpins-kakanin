@@ -20,8 +20,79 @@ class MyApp extends StatelessWidget {
     title: 'Neneng and Andy Kakanin Store',
     debugShowCheckedModeBanner: false,
     theme: pinpinsTheme(),
-    home: AuthGate(),
+    home: const _PromotionEntry(),
   );
+}
+
+class _PromotionEntry extends StatefulWidget {
+  const _PromotionEntry();
+
+  @override
+  State<_PromotionEntry> createState() => _PromotionEntryState();
+}
+
+class _PromotionEntryState extends State<_PromotionEntry> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showPromotion();
+    });
+  }
+
+  Future<void> _showPromotion() => showDialog<void>(
+    context: context,
+    barrierColor: PinpinsColors.ink.withValues(alpha: .62),
+    builder: (dialogContext) => Dialog(
+      clipBehavior: Clip.antiAlias,
+      elevation: 16,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: const BorderSide(color: PinpinsColors.border),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: const Image(
+                  image: AssetImage('assets/promo.webp'),
+                  semanticLabel: "Current promotion from Pinpin's Kakanin",
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: TextButton.icon(
+                onPressed: () => Navigator.pop(dialogContext),
+                style: TextButton.styleFrom(
+                  foregroundColor: PinpinsColors.deepLeaf,
+                  backgroundColor: Colors.transparent,
+                  textStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .4,
+                  ),
+                ),
+                label: const Text('Order From The Catalog'),
+                icon: const Icon(Icons.arrow_forward, size: 18),
+                iconAlignment: IconAlignment.end,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => AuthGate();
 }
 
 class AuthGate extends StatefulWidget {
@@ -156,7 +227,11 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<void> _reload() async {
     try {
       final products = await _fetchProducts();
-      if (mounted) setState(() => _products = Future.value(products));
+      if (mounted) {
+        setState(() {
+          _products = Future.value(products);
+        });
+      }
     } catch (error) {
       if (mounted) _showError(error);
     }
@@ -348,10 +423,7 @@ class _ProductsPageState extends State<ProductsPage> {
               ),
             ),
             // The catalog comes first; the introduction follows it.
-            Text(
-              'Pre-order kakanin',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            Text('Our Kakanins', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 10),
             // 2 × 2 blocks with equal-height cards.
             LayoutBuilder(
@@ -366,7 +438,9 @@ class _ProductsPageState extends State<ProductsPage> {
                     crossAxisCount: 2,
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
-                    mainAxisExtent: (cardWidth - 10) * 3.4 / 4 + 100,
+                    mainAxisExtent:
+                        cardWidth +
+                        78 * MediaQuery.textScalerOf(context).scale(14) / 14,
                   ),
                   itemBuilder: (_, index) {
                     final product = batch.products[index];
@@ -543,105 +617,71 @@ class _ProductCardState extends State<_ProductCard> {
                 ? a
                 : b,
           );
-    final onOpen = available.isEmpty ? null : widget.onOpen;
+    final soldOut = available.isEmpty;
     return AnimatedScale(
-      scale: _pressed ? .97 : 1,
-      duration: const Duration(milliseconds: 120),
-      child: DecoratedBox(
+      scale: _pressed ? .98 : 1,
+      duration: const Duration(milliseconds: 100),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: PinpinsColors.paper,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: PinpinsColors.border),
-          boxShadow: [
-            BoxShadow(
-              color: PinpinsColors.brown.withValues(
-                alpha: _pressed ? .08 : .14,
-              ),
-              blurRadius: _pressed ? 8 : 22,
-              offset: Offset(0, _pressed ? 3 : 10),
-            ),
-          ],
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: _hairline),
         ),
         child: Material(
           type: MaterialType.transparency,
           child: InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: onOpen,
+            onTap: soldOut ? null : widget.onOpen,
             onHighlightChanged: (value) => setState(() => _pressed = value),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Padding(
-                  padding: const EdgeInsets.all(5),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: AspectRatio(
-                      aspectRatio: 4 / 3.4,
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: product.imageUrl == null
-                                ? const ColoredBox(
-                                    color: Color(0xFFFFF7E8),
-                                    child: Icon(Icons.image_outlined, size: 40),
-                                  )
-                                : Image.network(
-                                    product.imageUrl!,
-                                    fit: BoxFit.cover,
-                                    semanticLabel: product.title,
-                                  ),
-                          ),
-                          Positioned(
-                            top: 8,
-                            left: 8,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 3,
+                AspectRatio(
+                  aspectRatio: 1,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      product.imageUrl == null
+                          ? const ColoredBox(
+                              color: PinpinsColors.cream,
+                              child: Icon(
+                                Icons.image_outlined,
+                                size: 32,
+                                color: _muted,
                               ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xF0FFFDF7),
-                                borderRadius: BorderRadius.circular(99),
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.eco,
-                                    size: 11,
-                                    color: PinpinsColors.leaf,
-                                  ),
-                                  SizedBox(width: 3),
-                                  Text(
-                                    'MADE TO ORDER',
-                                    style: TextStyle(
-                                      color: PinpinsColors.deepLeaf,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: .5,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                            )
+                          : Image.network(
+                              product.imageUrl!,
+                              fit: BoxFit.cover,
+                              semanticLabel: product.title,
                             ),
+                      if (soldOut)
+                        ColoredBox(
+                          color: PinpinsColors.paper.withValues(alpha: .6),
+                          child: const Center(
+                            child: _Badge('VOIDED', label: 'Sold out'),
                           ),
-                        ],
-                      ),
-                    ),
+                        ),
+                    ],
                   ),
                 ),
+                const Divider(height: 1, thickness: 1, color: _hairline),
                 Expanded(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 2, 10, 10),
+                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           product.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(color: PinpinsColors.brown),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            height: 1.2,
+                            fontWeight: FontWeight.w600,
+                            color: PinpinsColors.ink,
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Text(
@@ -650,67 +690,38 @@ class _ProductCardState extends State<_ProductCard> {
                               : product.description,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            height: 1.35,
-                            color: PinpinsColors.ink.withValues(alpha: .72),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            height: 1.2,
+                            color: _muted,
                           ),
                         ),
                         const Spacer(),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'FROM',
-                                    style: TextStyle(
-                                      color: PinpinsColors.leaf,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: 1,
-                                    ),
-                                  ),
-                                  FittedBox(
-                                    fit: BoxFit.scaleDown,
-                                    alignment: Alignment.centerLeft,
-                                    child: Text(
-                                      from?.price.formatted ?? 'Unavailable',
-                                      style: const TextStyle(
-                                        color: PinpinsColors.brown,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Tooltip(
-                              message: 'Pre-order',
-                              child: Material(
-                                color: onOpen == null
-                                    ? PinpinsColors.border
-                                    : PinpinsColors.deepLeaf,
-                                shape: const CircleBorder(),
-                                child: InkWell(
-                                  customBorder: const CircleBorder(),
-                                  onTap: onOpen,
-                                  child: const SizedBox.square(
-                                    dimension: 34,
-                                    child: Icon(
-                                      Icons.add_shopping_cart,
-                                      size: 18,
-                                      color: PinpinsColors.cream,
-                                    ),
+                        Text.rich(
+                          TextSpan(
+                            children: [
+                              if (from != null)
+                                const TextSpan(
+                                  text: 'from ',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w400,
+                                    color: _muted,
                                   ),
                                 ),
+                              TextSpan(
+                                text: from?.price.formatted ?? 'Unavailable',
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            height: 1.2,
+                            fontWeight: FontWeight.w700,
+                            color: PinpinsColors.ink,
+                          ),
                         ),
                       ],
                     ),
@@ -2117,7 +2128,11 @@ class _AccountPageState extends State<AccountPage> {
     try {
       await _service.setDefaultAddress(address);
       final addresses = await _service.addresses();
-      if (mounted) setState(() => _addresses = Future.value(addresses));
+      if (mounted) {
+        setState(() {
+          _addresses = Future.value(addresses);
+        });
+      }
     } catch (error) {
       if (mounted) _showError(error);
     } finally {
@@ -2193,201 +2208,541 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
+  Widget _sectionHeader(String title, {String? trailing}) => Padding(
+    padding: const EdgeInsets.fromLTRB(2, 0, 2, 8),
+    child: Row(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: PinpinsColors.ink,
+          ),
+        ),
+        const Spacer(),
+        if (trailing != null)
+          Text(trailing, style: const TextStyle(fontSize: 12, color: _muted)),
+      ],
+    ),
+  );
+
+  Widget _loadMore(bool loading, VoidCallback onPressed, String label) =>
+      InkWell(
+        onTap: loading ? null : onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Center(
+            child: Text(
+              loading ? 'Loading…' : label,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: PinpinsColors.deepLeaf,
+              ),
+            ),
+          ),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) => RefreshIndicator(
     onRefresh: _reload,
-    child: SingleChildScrollView(
+    child: ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        children: [
-          FutureBuilder<CustomerAccount>(
-            future: _customer,
-            builder: (_, snapshot) {
-              if (snapshot.hasError) {
-                return _error(
-                  snapshot.error,
-                  () => setState(() {
-                    _customer = _service.currentCustomer();
-                  }),
-                );
-              }
-              final customer = snapshot.data;
-              return PaperCard(
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.account_circle_outlined, size: 44),
-                  title: Text(
-                    customer == null
-                        ? 'Loading profile…'
-                        : customer.displayName.isEmpty
-                        ? 'Customer'
-                        : customer.displayName,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  subtitle: customer == null ? null : Text(customer.email),
-                  trailing: customer == null
-                      ? const CircularProgressIndicator()
-                      : IconButton(
-                          onPressed: () => _editProfile(customer),
-                          tooltip: 'Edit profile',
-                          icon: const Icon(Icons.edit_outlined),
-                        ),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      children: [
+        FutureBuilder<CustomerAccount>(
+          future: _customer,
+          builder: (_, snapshot) {
+            if (snapshot.hasError) {
+              return _error(
+                snapshot.error,
+                () => setState(() {
+                  _customer = _service.currentCustomer();
+                }),
+              );
+            }
+            final customer = snapshot.data;
+            return _ProfileHeader(
+              customer: customer,
+              onEdit: customer == null ? null : () => _editProfile(customer),
+            );
+          },
+        ),
+        const SizedBox(height: 20),
+        FutureBuilder<AccountConnection<CustomerOrder>>(
+          future: _orders,
+          builder: (_, snapshot) {
+            if (snapshot.hasError) {
+              return _error(
+                snapshot.error,
+                () => setState(() {
+                  _orders = _service.orders();
+                }),
+              );
+            }
+            final page = snapshot.data;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _sectionHeader(
+                  'Orders',
+                  trailing: page == null || page.items.isEmpty
+                      ? null
+                      : '${page.items.length}${page.hasNextPage ? '+' : ''}',
                 ),
-              );
-            },
-          ),
-          const SizedBox(height: 20),
-          const Eyebrow('Order history'),
-          Text('Orders', style: Theme.of(context).textTheme.headlineSmall),
-          FutureBuilder<AccountConnection<CustomerOrder>>(
-            future: _orders,
-            builder: (_, snapshot) {
-              if (snapshot.hasError) {
-                return _error(
-                  snapshot.error,
-                  () => setState(() {
-                    _orders = _service.orders();
-                  }),
-                );
-              }
-              final page = snapshot.data;
-              if (page == null) return const LinearProgressIndicator();
-              if (page.items.isEmpty) {
-                return const StateSurface(
-                  message: 'No orders yet',
-                  icon: Icons.receipt_long_outlined,
-                );
-              }
-              return Column(
-                children: [
-                  for (final order in page.items)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: PaperCard(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  order.name,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                Text(
-                                  '${order.currencyCode} ${double.tryParse(order.amount)?.toStringAsFixed(2) ?? order.amount}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Text(
-                              '${order.processedAt.toLocal().toIso8601String().split('T').first} • ${order.financialStatus} • ${order.fulfillmentStatus}',
-                            ),
-                            const Divider(),
-                            for (final line in order.lines)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text('${line.quantity}× ${line.name}'),
-                              ),
-                          ],
+                if (page == null)
+                  const _CardPlaceholder(height: 128)
+                else if (page.items.isEmpty)
+                  const _EmptyPanel('No orders yet')
+                else
+                  _Panel(
+                    children: [
+                      for (final order in page.items) _OrderRow(order: order),
+                      if (page.hasNextPage)
+                        _loadMore(
+                          _loadingMoreOrders,
+                          _loadMoreOrders,
+                          'Load more',
                         ),
-                      ),
-                    ),
-                  if (page.hasNextPage)
-                    TextButton(
-                      onPressed: _loadingMoreOrders ? null : _loadMoreOrders,
-                      child: Text(
-                        _loadingMoreOrders ? 'Loading…' : 'Load more orders',
-                      ),
-                    ),
-                ],
+                    ],
+                  ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 20),
+        FutureBuilder<AccountConnection<CustomerAddress>>(
+          future: _addresses,
+          builder: (_, snapshot) {
+            if (snapshot.hasError) {
+              return _error(
+                snapshot.error,
+                () => setState(() {
+                  _addresses = _service.addresses();
+                }),
               );
-            },
-          ),
-          const SizedBox(height: 18),
-          const Eyebrow('Saved details'),
-          Text(
-            'Saved addresses',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          FutureBuilder<AccountConnection<CustomerAddress>>(
-            future: _addresses,
-            builder: (_, snapshot) {
-              if (snapshot.hasError) {
-                return _error(
-                  snapshot.error,
-                  () => setState(() {
-                    _addresses = _service.addresses();
-                  }),
-                );
-              }
-              final page = snapshot.data;
-              if (page == null) return const LinearProgressIndicator();
-              if (page.items.isEmpty) {
-                return const StateSurface(
-                  message: 'No saved addresses',
-                  icon: Icons.location_off_outlined,
-                );
-              }
-              return Column(
-                children: [
-                  for (final address in page.items)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: PaperCard(
-                        child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(
-                            Icons.location_on_outlined,
-                            color: PinpinsColors.deepLeaf,
-                          ),
-                          title: Text(address.formatted.join('\n')),
-                          trailing: address.isDefault
-                              ? const Chip(
-                                  avatar: Icon(Icons.eco_outlined, size: 15),
-                                  label: Text('Default'),
-                                )
-                              : TextButton(
-                                  onPressed: _updatingAddressId == null
-                                      ? () => _setDefaultAddress(address)
-                                      : null,
-                                  child: Text(
-                                    _updatingAddressId == address.id
-                                        ? 'Saving…'
-                                        : 'Make default',
-                                  ),
-                                ),
+            }
+            final page = snapshot.data;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _sectionHeader('Addresses'),
+                if (page == null)
+                  const _CardPlaceholder(height: 64)
+                else if (page.items.isEmpty)
+                  const _EmptyPanel('No saved addresses')
+                else
+                  _Panel(
+                    children: [
+                      for (final address in page.items)
+                        _AddressRow(
+                          address: address,
+                          saving: _updatingAddressId == address.id,
+                          onMakeDefault: _updatingAddressId == null
+                              ? () => _setDefaultAddress(address)
+                              : null,
                         ),
+                      if (page.hasNextPage)
+                        _loadMore(
+                          _loadingMoreAddresses,
+                          _loadMoreAddresses,
+                          'Load more',
+                        ),
+                    ],
+                  ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 20),
+        _Panel(
+          children: [
+            InkWell(
+              onTap: widget.signOut,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                child: Row(
+                  children: [
+                    Icon(Icons.logout, size: 18, color: PinpinsColors.brown),
+                    SizedBox(width: 10),
+                    Text(
+                      'Sign out',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: PinpinsColors.brown,
                       ),
                     ),
-                  if (page.hasNextPage)
-                    TextButton(
-                      onPressed: _loadingMoreAddresses
-                          ? null
-                          : _loadMoreAddresses,
-                      child: Text(
-                        _loadingMoreAddresses
-                            ? 'Loading…'
-                            : 'Load more addresses',
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+const _muted = Color(0xFF7A6F66);
+const _hairline = Color(0xFFE7E1D6);
+
+/// Bordered container that separates its children with hairline dividers.
+class _Panel extends StatelessWidget {
+  const _Panel({required this.children});
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    clipBehavior: Clip.antiAlias,
+    decoration: BoxDecoration(
+      color: PinpinsColors.paper,
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: _hairline),
+    ),
+    child: Material(
+      type: MaterialType.transparency,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0) const Divider(height: 1, thickness: 1, color: _hairline),
+            children[i],
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+class _EmptyPanel extends StatelessWidget {
+  const _EmptyPanel(this.message);
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => _Panel(
+    children: [
+      Padding(
+        padding: const EdgeInsets.all(20),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 13, color: _muted),
+        ),
+      ),
+    ],
+  );
+}
+
+class _ProfileHeader extends StatelessWidget {
+  const _ProfileHeader({required this.customer, required this.onEdit});
+  final CustomerAccount? customer;
+  final VoidCallback? onEdit;
+
+  String get _initials {
+    final c = customer;
+    if (c == null) return '';
+    final parts = [c.firstName, c.lastName].where((p) => p.trim().isNotEmpty);
+    if (parts.isNotEmpty) {
+      return parts.map((p) => p.trim()[0].toUpperCase()).join();
+    }
+    return c.email.isEmpty ? '?' : c.email[0].toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = customer;
+    return _Panel(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: PinpinsColors.deepLeaf,
+                foregroundColor: PinpinsColors.paper,
+                child: Text(
+                  _initials,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      c == null
+                          ? 'Loading…'
+                          : c.displayName.isEmpty
+                          ? 'Customer'
+                          : c.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: PinpinsColors.ink,
                       ),
                     ),
-                ],
-              );
-            },
+                    if (c != null && c.email.isNotEmpty)
+                      Text(
+                        c.email,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13, color: _muted),
+                      ),
+                  ],
+                ),
+              ),
+              if (onEdit != null)
+                OutlinedButton(
+                  onPressed: onEdit,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: PinpinsColors.ink,
+                    side: const BorderSide(color: _hairline),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    minimumSize: const Size(0, 32),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  child: const Text('Edit'),
+                ),
+            ],
           ),
-          const SizedBox(height: 20),
-          OutlinedButton.icon(
-            onPressed: widget.signOut,
-            icon: const Icon(Icons.logout),
-            label: const Text('Sign out'),
+        ),
+      ],
+    );
+  }
+}
+
+class _Badge extends StatelessWidget {
+  const _Badge(this.status, {this.label});
+  final String status;
+  final String? label;
+
+  static String _humanize(String value) {
+    final text = value.replaceAll('_', ' ').toLowerCase().trim();
+    return text.isEmpty ? '' : text[0].toUpperCase() + text.substring(1);
+  }
+
+  Color get _dot {
+    switch (status.toUpperCase()) {
+      case 'PAID':
+      case 'FULFILLED':
+        return const Color(0xFF4F7A3A);
+      case 'REFUNDED':
+      case 'PARTIALLY_REFUNDED':
+      case 'VOIDED':
+        return const Color(0xFFB0473A);
+      default:
+        return PinpinsColors.gold;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(color: _hairline),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(color: _dot, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label ?? _humanize(status),
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: PinpinsColors.ink,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _OrderRow extends StatelessWidget {
+  const _OrderRow({required this.order});
+  final CustomerOrder order;
+
+  static const _months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final date = order.processedAt.toLocal();
+    final amount =
+        double.tryParse(order.amount)?.toStringAsFixed(2) ?? order.amount;
+    final items = order.lines.map((l) => '${l.quantity}× ${l.name}').join(', ');
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                order.name,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: PinpinsColors.ink,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${_months[date.month - 1]} ${date.day}, ${date.year}',
+                style: const TextStyle(fontSize: 12, color: _muted),
+              ),
+              const Spacer(),
+              Text(
+                '${order.currencyCode} $amount',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: PinpinsColors.ink,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          if (items.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              items,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, color: _muted),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              if (order.financialStatus.isNotEmpty)
+                _Badge(order.financialStatus),
+              if (order.fulfillmentStatus.isNotEmpty)
+                _Badge(order.fulfillmentStatus),
+            ],
           ),
         ],
       ),
+    );
+  }
+}
+
+class _AddressRow extends StatelessWidget {
+  const _AddressRow({
+    required this.address,
+    required this.saving,
+    required this.onMakeDefault,
+  });
+  final CustomerAddress address;
+  final bool saving;
+  final VoidCallback? onMakeDefault;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = address.formatted;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (lines.isNotEmpty)
+                  Text(
+                    lines.first,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: PinpinsColors.ink,
+                    ),
+                  ),
+                if (lines.length > 1)
+                  Text(
+                    lines.skip(1).join(', '),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, color: _muted),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (address.isDefault)
+            const Padding(
+              padding: EdgeInsets.only(right: 6),
+              child: _Badge('FULFILLED', label: 'Default'),
+            )
+          else
+            TextButton(
+              onPressed: onMakeDefault,
+              style: TextButton.styleFrom(
+                foregroundColor: PinpinsColors.deepLeaf,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 30),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                textStyle: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              child: Text(saving ? 'Saving…' : 'Set default'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CardPlaceholder extends StatelessWidget {
+  const _CardPlaceholder({required this.height});
+  final double height;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: height,
+    decoration: BoxDecoration(
+      color: _hairline.withValues(alpha: 0.5),
+      borderRadius: BorderRadius.circular(10),
     ),
   );
 }

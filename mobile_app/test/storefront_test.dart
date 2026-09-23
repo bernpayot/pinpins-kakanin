@@ -545,6 +545,13 @@ void main() {
     expect(find.byTooltip('Edit profile'), findsOneWidget);
   });
 
+  testWidgets('promotion opens when the app starts', (tester) async {
+    await tester.pumpWidget(const MyApp());
+    await tester.pump();
+
+    expect(find.text('Order From The Catalog'), findsOneWidget);
+  });
+
   testWidgets('store shell has no top bar and a bottom menu', (tester) async {
     await http.runWithClient(() async {
       await tester.pumpWidget(MaterialApp(home: AuthGate(auth: _FakeAuth())));
