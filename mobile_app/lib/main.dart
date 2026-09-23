@@ -8,6 +8,7 @@ import 'basket_service.dart';
 import 'checkout_service.dart';
 import 'preorder.dart';
 import 'product_service.dart';
+import 'store_info.dart';
 
 void main() => runApp(const MyApp());
 
@@ -16,7 +17,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'Pinpins Kakanin',
+    title: 'Neneng and Andy Kakanin Store',
     debugShowCheckedModeBanner: false,
     theme: pinpinsTheme(),
     home: AuthGate(),
@@ -101,12 +102,39 @@ class _ProductsPageState extends State<ProductsPage> {
   Map<String, Map<String, String>> _attributes = {};
   bool _authBusy = false;
   bool _loadingMore = false;
+  int _tab = 0;
+  bool _showBackToTop = false;
+  final _catalogScroll = ScrollController();
+  final _contactForm = GlobalKey<ContactFormState>();
 
   @override
   void initState() {
     super.initState();
     _products = _fetchProducts();
     _restoreBasket();
+    _catalogScroll.addListener(() {
+      final show = _catalogScroll.offset > 600;
+      if (show != _showBackToTop) setState(() => _showBackToTop = show);
+    });
+  }
+
+  @override
+  void dispose() {
+    _catalogScroll.dispose();
+    super.dispose();
+  }
+
+  void _openHelp(HelpTopic topic) {
+    setState(() => _tab = 1);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final form = _contactForm.currentState;
+      if (form == null) return;
+      form.selectTopic(topic);
+      Scrollable.ensureVisible(
+        form.context,
+        duration: const Duration(milliseconds: 300),
+      );
+    });
   }
 
   Future<ProductBatch> _fetchProducts({String? after}) =>
@@ -206,11 +234,20 @@ class _ProductsPageState extends State<ProductsPage> {
     }
   }
 
+  // Ordering details open as a popup card over the catalog, like the website.
   Future<void> _openProduct(Product product) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            ProductDetailsPage(handle: product.handle, onAdd: _addToBasket),
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: PinpinsColors.cream,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (_) => FractionallySizedBox(
+        heightFactor: .94,
+        child: ProductDetailsPage(handle: product.handle, onAdd: _addToBasket),
       ),
     );
   }
@@ -273,7 +310,7 @@ class _ProductsPageState extends State<ProductsPage> {
     future: _products,
     builder: (context, snapshot) {
       if (snapshot.connectionState == ConnectionState.waiting) {
-        return const Center(child: CircularProgressIndicator());
+        return const _CatalogSkeleton();
       }
       if (snapshot.hasError) {
         return StateSurface(
@@ -296,68 +333,140 @@ class _ProductsPageState extends State<ProductsPage> {
       return RefreshIndicator(
         onRefresh: _reload,
         child: ListView(
+          controller: _catalogScroll,
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(14, 8, 14, 32),
           children: [
-            const _Hero(),
-            const SizedBox(height: 22),
-            const Eyebrow(
-              'Fresh from the steamer',
-              icon: Icons.rice_bowl_outlined,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'The four we are known for',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'The four the family has made since the beginning. Every one comes in five sizes from a tub for two to a bilao that feeds a fiesta.',
-            ),
-            const SizedBox(height: 18),
-            for (final product in batch.products) ...[
-              _ProductCard(
-                product: product,
-                onOpen: () => _openProduct(product),
+            SafeArea(
+              bottom: false,
+              child: BrandHeader(
+                trailing: IconButton(
+                  tooltip: 'Chat on Messenger',
+                  onPressed: () => openLinkOrWarn(context, StoreInfo.messenger),
+                  icon: const Icon(Icons.chat_bubble_outline),
+                ),
               ),
-              const SizedBox(height: 14),
-            ],
+            ),
+            // The catalog comes first; the introduction follows it.
+            Text(
+              'Pre-order kakanin',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 10),
+            // 2 × 2 blocks with equal-height cards.
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final cardWidth = (constraints.maxWidth - 12) / 2;
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  padding: EdgeInsets.zero,
+                  itemCount: batch.products.length,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    mainAxisExtent: (cardWidth - 10) * 3.4 / 4 + 100,
+                  ),
+                  itemBuilder: (_, index) {
+                    final product = batch.products[index];
+                    return _ProductCard(
+                      product: product,
+                      onOpen: () => _openProduct(product),
+                    );
+                  },
+                );
+              },
+            ),
+            const SizedBox(height: 12),
             if (batch.hasNextPage)
               OutlinedButton(
                 onPressed: _loadingMore ? null : _loadMore,
                 child: Text(_loadingMore ? 'Loading…' : 'Load more products'),
               ),
             const SizedBox(height: 20),
+            const _Hero(),
+            const SizedBox(height: 14),
             const _OrderingSteps(),
             const SizedBox(height: 14),
             const _StoryAndFaq(),
+            const SizedBox(height: 14),
+            StoreFooter(onOpenHelp: _openHelp),
           ],
         ),
       );
     },
   );
 
+  int get _basketCount => _basket.values.fold(0, (sum, value) => sum + value);
+
+  // No top bar: the brand header scrolls with the page and the menu sits at
+  // the bottom of the screen, within reach of the thumb.
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('Pinpins Kakanin'),
-      actions: [
-        IconButton(
-          onPressed: _authBusy ? null : _openAccount,
-          tooltip: 'Account',
-          icon: const Icon(Icons.account_circle_outlined),
-        ),
+    body: IndexedStack(
+      index: _tab,
+      children: [
+        _catalogBody(),
+        HelpPage(formKey: _contactForm),
       ],
     ),
-    body: _catalogBody(),
-    floatingActionButton: FloatingActionButton(
-      onPressed: _openBasket,
-      tooltip: 'Basket',
-      child: Badge(
-        isLabelVisible: _basket.isNotEmpty,
-        label: Text('${_basket.values.fold(0, (sum, value) => sum + value)}'),
-        child: const Icon(Icons.shopping_basket_outlined),
-      ),
+    floatingActionButton: _tab == 0 && _showBackToTop
+        ? FloatingActionButton.small(
+            tooltip: 'Back to top',
+            onPressed: () => _catalogScroll.animateTo(
+              0,
+              duration: const Duration(milliseconds: 400),
+              curve: Curves.easeOut,
+            ),
+            child: const Icon(Icons.arrow_upward),
+          )
+        : null,
+    bottomNavigationBar: NavigationBar(
+      selectedIndex: _tab,
+      onDestinationSelected: (index) {
+        switch (index) {
+          case 0:
+            if (_tab == 0 && _catalogScroll.hasClients) {
+              _catalogScroll.animateTo(
+                0,
+                duration: const Duration(milliseconds: 400),
+                curve: Curves.easeOut,
+              );
+            }
+            setState(() => _tab = 0);
+          case 1:
+            setState(() => _tab = 1);
+          case 2:
+            _openBasket();
+          case 3:
+            if (!_authBusy) _openAccount();
+        }
+      },
+      destinations: [
+        const NavigationDestination(
+          icon: Icon(Icons.storefront_outlined),
+          selectedIcon: Icon(Icons.storefront),
+          label: 'Shop',
+        ),
+        const NavigationDestination(
+          icon: Icon(Icons.help_outline),
+          selectedIcon: Icon(Icons.help),
+          label: 'Help',
+        ),
+        NavigationDestination(
+          icon: Badge(
+            isLabelVisible: _basket.isNotEmpty,
+            label: Text('$_basketCount'),
+            child: const Icon(Icons.shopping_basket_outlined),
+          ),
+          label: 'Basket',
+        ),
+        const NavigationDestination(
+          icon: Icon(Icons.account_circle_outlined),
+          label: 'Account',
+        ),
+      ],
     ),
   );
 }
@@ -408,13 +517,21 @@ class _FactChip extends StatelessWidget {
   );
 }
 
-class _ProductCard extends StatelessWidget {
+class _ProductCard extends StatefulWidget {
   const _ProductCard({required this.product, required this.onOpen});
   final Product product;
   final VoidCallback onOpen;
 
   @override
+  State<_ProductCard> createState() => _ProductCardState();
+}
+
+class _ProductCardState extends State<_ProductCard> {
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) {
+    final product = widget.product;
     final available = product.variants
         .where((variant) => variant.availableForSale)
         .toList();
@@ -426,100 +543,231 @@ class _ProductCard extends StatelessWidget {
                 ? a
                 : b,
           );
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onOpen,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            AspectRatio(
-              aspectRatio: 4 / 3,
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: product.imageUrl == null
-                        ? const ColoredBox(
-                            color: Color(0xFFFFF7E8),
-                            child: Icon(Icons.image_outlined, size: 50),
-                          )
-                        : Image.network(
-                            product.imageUrl!,
-                            fit: BoxFit.cover,
-                            semanticLabel: product.title,
-                          ),
-                  ),
-                  const Positioned(
-                    top: 12,
-                    left: 12,
-                    child: Chip(
-                      avatar: Icon(Icons.eco_outlined, size: 15),
-                      label: Text('MADE TO ORDER'),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-                ],
+    final onOpen = available.isEmpty ? null : widget.onOpen;
+    return AnimatedScale(
+      scale: _pressed ? .97 : 1,
+      duration: const Duration(milliseconds: 120),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: PinpinsColors.paper,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: PinpinsColors.border),
+          boxShadow: [
+            BoxShadow(
+              color: PinpinsColors.brown.withValues(
+                alpha: _pressed ? .08 : .14,
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    product.title,
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    product.description.isEmpty
-                        ? productStory(product.handle)
-                        : product.description,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (available.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        for (final variant in available)
-                          Chip(
-                            label: Text(sizeGuide(variant.label).label),
-                            visualDensity: VisualDensity.compact,
-                          ),
-                      ],
-                    ),
-                  ],
-                  const Divider(height: 24),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          from == null
-                              ? 'Unavailable'
-                              : 'From ${from.price.formatted} • ${available.length} ${available.length == 1 ? 'size' : 'sizes'}',
-                          style: const TextStyle(
-                            color: PinpinsColors.brown,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                      FilledButton(
-                        onPressed: available.isEmpty ? null : onOpen,
-                        child: const Text('Pre-order'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+              blurRadius: _pressed ? 8 : 22,
+              offset: Offset(0, _pressed ? 3 : 10),
             ),
           ],
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: onOpen,
+            onHighlightChanged: (value) => setState(() => _pressed = value),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(5),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: AspectRatio(
+                      aspectRatio: 4 / 3.4,
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: product.imageUrl == null
+                                ? const ColoredBox(
+                                    color: Color(0xFFFFF7E8),
+                                    child: Icon(Icons.image_outlined, size: 40),
+                                  )
+                                : Image.network(
+                                    product.imageUrl!,
+                                    fit: BoxFit.cover,
+                                    semanticLabel: product.title,
+                                  ),
+                          ),
+                          Positioned(
+                            top: 8,
+                            left: 8,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xF0FFFDF7),
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.eco,
+                                    size: 11,
+                                    color: PinpinsColors.leaf,
+                                  ),
+                                  SizedBox(width: 3),
+                                  Text(
+                                    'MADE TO ORDER',
+                                    style: TextStyle(
+                                      color: PinpinsColors.deepLeaf,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: .5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 2, 10, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          product.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(color: PinpinsColors.brown),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          product.description.isEmpty
+                              ? productStory(product.handle)
+                              : product.description,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            height: 1.35,
+                            color: PinpinsColors.ink.withValues(alpha: .72),
+                          ),
+                        ),
+                        const Spacer(),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'FROM',
+                                    style: TextStyle(
+                                      color: PinpinsColors.leaf,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 1,
+                                    ),
+                                  ),
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      from?.price.formatted ?? 'Unavailable',
+                                      style: const TextStyle(
+                                        color: PinpinsColors.brown,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Tooltip(
+                              message: 'Pre-order',
+                              child: Material(
+                                color: onOpen == null
+                                    ? PinpinsColors.border
+                                    : PinpinsColors.deepLeaf,
+                                shape: const CircleBorder(),
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: onOpen,
+                                  child: const SizedBox.square(
+                                    dimension: 34,
+                                    child: Icon(
+                                      Icons.add_shopping_cart,
+                                      size: 18,
+                                      color: PinpinsColors.cream,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
+}
+
+/// Pulsing placeholders in the grid's shape while products load.
+class _CatalogSkeleton extends StatefulWidget {
+  const _CatalogSkeleton();
+
+  @override
+  State<_CatalogSkeleton> createState() => _CatalogSkeletonState();
+}
+
+class _CatalogSkeletonState extends State<_CatalogSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+    lowerBound: .45,
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+    opacity: _pulse,
+    child: GridView.count(
+      padding: const EdgeInsets.fromLTRB(14, 90, 14, 14),
+      crossAxisCount: 2,
+      crossAxisSpacing: 12,
+      mainAxisSpacing: 12,
+      childAspectRatio: .78,
+      physics: const NeverScrollableScrollPhysics(),
+      children: List.generate(
+        4,
+        (_) => DecoratedBox(
+          decoration: BoxDecoration(
+            color: PinpinsColors.toastedCream.withValues(alpha: .6),
+            borderRadius: BorderRadius.circular(20),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class _OrderingSteps extends StatelessWidget {
@@ -1455,6 +1703,7 @@ class _BasketPageState extends State<BasketPage> {
             _attributes = {};
             _cart = null;
           });
+          await _showOrderPlaced();
         }
       }
     } catch (error) {
@@ -1463,6 +1712,38 @@ class _BasketPageState extends State<BasketPage> {
       if (mounted) setState(() => _checkingOut = false);
     }
   }
+
+  Future<void> _showOrderPlaced() => showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      icon: const Icon(Icons.check_circle_outline, size: 40),
+      title: const Text('Order placed'),
+      content: const Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Your confirmation and every status update go to the email you used at checkout. The family confirms the final pickup or delivery time by text or Messenger.',
+          ),
+          SizedBox(height: 14),
+          MessengerCard(
+            title: 'Chat with us on Messenger',
+            text: 'Send your order number for a quick update.',
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => openRefundPolicy(dialogContext),
+          child: const Text('Refund policy'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Done'),
+        ),
+      ],
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -1566,10 +1847,34 @@ class _BasketPageState extends State<BasketPage> {
                       if (_syncing) const LinearProgressIndicator(),
                       const SizedBox(height: 10),
                       const SizedBox(height: 8),
-                      const Text(
-                        'Need to change something after ordering? Contact the family.',
+                      const MessengerCard(),
+                      const SizedBox(height: 10),
+                      Text.rich(
+                        TextSpan(
+                          text:
+                              'Cancellation is available only before preparation begins. By checking out, you agree to our ',
+                          children: [
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.baseline,
+                              baseline: TextBaseline.alphabetic,
+                              child: GestureDetector(
+                                onTap: () => openRefundPolicy(context),
+                                child: const Text(
+                                  'cancellation and refund policy',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: PinpinsColors.deepLeaf,
+                                    fontWeight: FontWeight.w900,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const TextSpan(text: '.'),
+                          ],
+                        ),
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 12),
+                        style: const TextStyle(fontSize: 12),
                       ),
                     ],
                   ),
@@ -1973,7 +2278,7 @@ class _AccountPageState extends State<AccountPage> {
                                   ),
                                 ),
                                 Text(
-                                  '${order.currencyCode} ${order.amount}',
+                                  '${order.currencyCode} ${double.tryParse(order.amount)?.toStringAsFixed(2) ?? order.amount}',
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w900,
                                   ),

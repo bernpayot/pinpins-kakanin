@@ -37,7 +37,7 @@ void main() {
           child: child!,
         ),
         home: Scaffold(
-          appBar: AppBar(title: const Text('Pinpins Kakanin')),
+          appBar: AppBar(title: const Text('Neneng and Andy Kakanin Store')),
           body: ListView(
             padding: const EdgeInsets.all(14),
             children: [

@@ -379,7 +379,7 @@ class LeafMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Semantics(
-    label: 'Pinpins Kakanin',
+    label: 'Neneng and Andy Kakanin Store',
     child: SizedBox.square(
       dimension: size,
       child: CustomPaint(painter: _LeafPainter()),

@@ -8,7 +8,11 @@ class Money {
   final String amount;
   final String currencyCode;
 
-  String get formatted => '$currencyCode $amount';
+  /// Always two decimal places, e.g. "PHP 350.00".
+  String get formatted {
+    final value = double.tryParse(amount);
+    return '$currencyCode ${value == null ? amount : value.toStringAsFixed(2)}';
+  }
 
   factory Money.fromJson(Map<String, dynamic> json) => Money(
     amount: json['amount'] as String,

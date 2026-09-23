@@ -1,11 +1,11 @@
 {
-    "name": "mobile_app",
-    "short_name": "mobile_app",
+    "name": "Neneng and Andy Kakanin Store",
+    "short_name": "Neneng & Andy",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#f5eddc",
+    "theme_color": "#354327",
+    "description": "Pre-order home-made kakanin from Imus, Cavite.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

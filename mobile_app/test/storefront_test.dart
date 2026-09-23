@@ -13,6 +13,7 @@ import 'package:mobile_app/basket_service.dart';
 import 'package:mobile_app/checkout_service.dart';
 import 'package:mobile_app/main.dart';
 import 'package:mobile_app/product_service.dart';
+import 'package:mobile_app/store_info.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -544,21 +545,138 @@ void main() {
     expect(find.byTooltip('Edit profile'), findsOneWidget);
   });
 
-  testWidgets('store shell keeps only account action and floating basket', (
-    tester,
-  ) async {
+  testWidgets('store shell has no top bar and a bottom menu', (tester) async {
     await http.runWithClient(() async {
       await tester.pumpWidget(MaterialApp(home: AuthGate(auth: _FakeAuth())));
       await tester.pumpAndSettle();
     }, _storeClient);
 
-    expect(find.text('Pinpins Kakanin'), findsOneWidget);
+    expect(find.byType(AppBar), findsNothing);
+    expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.byTooltip('Account'), findsOneWidget);
-    expect(find.text('Sign in'), findsNothing);
     expect(find.byTooltip('Basket'), findsOneWidget);
+    expect(find.text('Sign in'), findsNothing);
     expect(find.byTooltip('Reload'), findsNothing);
-    expect(tester.widget<AppBar>(find.byType(AppBar)).leading, isNull);
-    expect(find.byType(NavigationBar), findsNothing);
+  });
+
+  testWidgets('catalog shows products in a 2 x 2 grid on a small phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 740);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Map<String, dynamic> product(String name) => {
+      ..._productDetailsJson,
+      'handle': name.toLowerCase(),
+      'title': name,
+      'description':
+          'A long description of this kakanin that should wrap and be cut off neatly on the card.',
+      'images': {'nodes': []},
+      'variants': {
+        'nodes': [
+          for (final (i, size) in [
+            'Tub',
+            'X-Small',
+            'Small',
+            'Medium',
+            'Large',
+          ].indexed)
+            {
+              'id': 'gid://shopify/ProductVariant/$name$i',
+              'title': size,
+              'selectedOptions': [
+                {'name': 'Size', 'value': size},
+              ],
+              'availableForSale': true,
+              'price': {'amount': '${1200 + i}.5', 'currencyCode': 'PHP'},
+            },
+        ],
+      },
+    };
+    await http.runWithClient(
+      () async {
+        await tester.pumpWidget(MaterialApp(home: AuthGate(auth: _FakeAuth())));
+        await tester.pumpAndSettle();
+      },
+      () => _storeClient((request) {
+        if (!request.url.path.endsWith('/shopify/products')) return null;
+        return http.Response(
+          jsonEncode({
+            'nodes': [
+              for (final name in ['Sapin-Sapin', 'Puto', 'Kutsinta', 'Maha'])
+                product(name),
+            ],
+            'pageInfo': {'hasNextPage': false, 'endCursor': null},
+          }),
+          200,
+        );
+      }),
+    );
+
+    expect(tester.takeException(), isNull);
+    final first = tester.getTopLeft(find.text('Sapin-Sapin'));
+    final second = tester.getTopLeft(find.text('Puto'));
+    expect(second.dy, first.dy);
+    expect(second.dx, greaterThan(first.dx));
+    expect(find.text('PHP 1200.50'), findsWidgets);
+  });
+
+  testWidgets('help tab has refund policy and a robot-guarded report form', (
+    tester,
+  ) async {
+    final opened = <Uri>[];
+    openLink = (uri) async {
+      opened.add(uri);
+      return true;
+    };
+    await http.runWithClient(() async {
+      await tester.pumpWidget(MaterialApp(home: AuthGate(auth: _FakeAuth())));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Help'));
+      await tester.pumpAndSettle();
+    }, _storeClient);
+
+    final helpList = find.byType(Scrollable).last;
+    await tester.scrollUntilVisible(
+      find.text('Cancellation and refund policy'),
+      200,
+      scrollable: helpList,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Order status updates'),
+      200,
+      scrollable: helpList,
+    );
+    await tester.scrollUntilVisible(
+      find.widgetWithText(TextFormField, 'Your name'),
+      200,
+      scrollable: helpList,
+    );
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Your name'),
+      'Ana',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Your message'),
+      'Hello',
+    );
+    await tester.ensureVisible(find.text('Send inquiry'));
+    await tester.tap(find.text('Send inquiry'));
+    await tester.pump();
+    expect(find.textContaining('not a robot'), findsWidgets);
+    expect(opened, isEmpty);
+
+    ContactFormState.minimumFillTime = Duration.zero;
+    addTearDown(
+      () => ContactFormState.minimumFillTime = const Duration(seconds: 3),
+    );
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pump();
+    await tester.tap(find.text('Send inquiry'));
+    await tester.pump();
+    expect(opened.single.scheme, 'sms');
+    expect(opened.single.queryParameters['body'], contains('Hello'));
   });
 
   testWidgets('cancelling login leaves the store accessible', (tester) async {
