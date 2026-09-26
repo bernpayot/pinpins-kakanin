@@ -84,6 +84,9 @@ class ShopifyStorefrontService
             handle
             title
             description
+            ingredients: metafield(namespace: "custom", key: "ingredients_and_allergens") {
+                value
+            }
             images(first: 20) {
                 nodes {
                     url

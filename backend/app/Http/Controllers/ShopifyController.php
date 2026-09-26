@@ -90,8 +90,8 @@ class ShopifyController extends Controller
             'lineId' => ['nullable', 'string', 'max:2048', 'regex:/^gid:\/\/shopify\/CartLine\//'],
             'variantId' => ['nullable', 'string', 'regex:/^gid:\/\/shopify\/ProductVariant\/\d+$/'],
             'quantity' => ['required', 'integer', 'min:0', 'max:99'],
-            'attributes' => ['nullable', 'array', 'max:2'],
-            'attributes.*.key' => ['required_with:attributes', 'string', 'in:Preferred Date,Special request'],
+            'attributes' => ['nullable', 'array', 'max:3'],
+            'attributes.*.key' => ['required_with:attributes', 'string', 'in:Preferred Date,Preferred Time,Special request'],
             'attributes.*.value' => ['required_with:attributes', 'string', 'max:500'],
         ]);
         $this->validatePreorderAttributes($validated['attributes'] ?? []);
@@ -124,8 +124,8 @@ class ShopifyController extends Controller
             'lines' => ['required', 'array', 'min:1', 'max:250'],
             'lines.*.variantId' => ['required', 'string', 'regex:/^gid:\/\/shopify\/ProductVariant\/\d+$/'],
             'lines.*.quantity' => ['required', 'integer', 'min:1', 'max:99'],
-            'lines.*.attributes' => ['nullable', 'array', 'max:2'],
-            'lines.*.attributes.*.key' => ['required_with:lines.*.attributes', 'string', 'in:Preferred Date,Special request'],
+            'lines.*.attributes' => ['nullable', 'array', 'max:3'],
+            'lines.*.attributes.*.key' => ['required_with:lines.*.attributes', 'string', 'in:Preferred Date,Preferred Time,Special request'],
             'lines.*.attributes.*.value' => ['required_with:lines.*.attributes', 'string', 'max:500'],
         ])['lines'];
 
@@ -139,7 +139,15 @@ class ShopifyController extends Controller
     /** @param array<int, array{key: string, value: string}> $attributes */
     private function validatePreorderAttributes(array $attributes): void
     {
-        $date = collect($attributes)->firstWhere('key', 'Preferred Date')['value'] ?? null;
+        $attributes = collect($attributes);
+        $time = $attributes->firstWhere('key', 'Preferred Time')['value'] ?? null;
+        if ($time !== null && ! preg_match('/^(?:(?:0[8-9]|1\d):[0-5][05]|20:00)$/', $time)) {
+            throw ValidationException::withMessages([
+                'attributes' => 'Preferred Time must be between 08:00 and 20:00 in five-minute increments.',
+            ]);
+        }
+
+        $date = $attributes->firstWhere('key', 'Preferred Date')['value'] ?? null;
         if ($date === null) {
             return;
         }

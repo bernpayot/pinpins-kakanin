@@ -54,6 +54,27 @@ class ShopifyStorefrontTest extends TestCase
         ) && $request->hasHeader('Shopify-Storefront-Buyer-IP', '127.0.0.1'));
     }
 
+    public function test_product_includes_the_website_ingredients_metafield(): void
+    {
+        Http::fake(function (Request $request) {
+            $this->assertStringContainsString(
+                'metafield(namespace: "custom", key: "ingredients_and_allergens")',
+                $request->data()['query'],
+            );
+
+            return Http::response([
+                'data' => ['product' => [
+                    'handle' => 'bibingka',
+                    'ingredients' => ['value' => 'Rice flour, coconut milk, sugar'],
+                ]],
+            ]);
+        });
+
+        $this->getJson('/api/shopify/products/bibingka')
+            ->assertOk()
+            ->assertJsonPath('ingredients.value', 'Rice flour, coconut milk, sugar');
+    }
+
     public function test_products_support_search_collection_and_cursor_pagination(): void
     {
         Http::fake(function (Request $request) {
@@ -156,6 +177,7 @@ class ShopifyStorefrontTest extends TestCase
             $line = ((array) $request->data()['variables'])['input']['lines'][0];
             $this->assertSame([
                 ['key' => 'Preferred Date', 'value' => $date],
+                ['key' => 'Preferred Time', 'value' => '14:30'],
                 ['key' => 'Special request', 'value' => 'Less sweet'],
             ], $line['attributes']);
 
@@ -172,6 +194,7 @@ class ShopifyStorefrontTest extends TestCase
             'quantity' => 1,
             'attributes' => [
                 ['key' => 'Preferred Date', 'value' => $date],
+                ['key' => 'Preferred Time', 'value' => '14:30'],
                 ['key' => 'Special request', 'value' => 'Less sweet'],
             ],
         ]]])->assertCreated();
@@ -182,6 +205,15 @@ class ShopifyStorefrontTest extends TestCase
             'attributes' => [[
                 'key' => 'Preferred Date',
                 'value' => now()->subDay()->format('Y-m-d'),
+            ]],
+        ]]])->assertUnprocessable();
+
+        $this->postJson('/api/shopify/cart', ['lines' => [[
+            'variantId' => 'gid://shopify/ProductVariant/123',
+            'quantity' => 1,
+            'attributes' => [[
+                'key' => 'Preferred Time',
+                'value' => '20:30',
             ]],
         ]]])->assertUnprocessable();
     }
